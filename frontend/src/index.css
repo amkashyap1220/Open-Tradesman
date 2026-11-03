@@ -1,0 +1,38 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body {
+  background: theme("colors.concrete");
+  color: theme("colors.slate.ink");
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Numbers line up in columns, like a ledger. */
+.figures {
+  font-family: theme("fontFamily.cond");
+  font-variant-numeric: tabular-nums;
+}
+
+/* The work-order slip: white paper with ruled lines. */
+.slip {
+  background: theme("colors.paper");
+  border-radius: 4px;
+  box-shadow: 0 1px 0 theme("colors.rule");
+}
+.slip-row + .slip-row {
+  border-top: 1px solid theme("colors.rule");
+}
+
+:focus-visible {
+  outline: 3px solid theme("colors.carbon");
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+}

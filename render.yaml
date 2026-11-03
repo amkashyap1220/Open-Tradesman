@@ -1,0 +1,38 @@
+# Render blueprint for the API (api.alexanderk.dev).
+# In Render: New > Blueprint > pick this repo. Then add the secrets in the dashboard
+# and a custom domain api.alexanderk.dev (CNAME in Cloudflare DNS, proxy off).
+services:
+  - type: web
+    name: paypal-tradesman-api
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.7"
+      - key: APP_ORIGIN
+        value: https://tradesman.alexanderk.dev,http://localhost:5173
+      - key: PAYPAL_BASE_URL
+        value: https://api-m.sandbox.paypal.com
+      - key: CLAUDE_MODEL_SMART
+        value: claude-sonnet-5-5
+      - key: CLAUDE_MODEL_FAST
+        value: claude-haiku-5-5
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_URL_READONLY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: PAYPAL_CLIENT_ID
+        sync: false
+      - key: PAYPAL_CLIENT_SECRET
+        sync: false
+      - key: PAYPAL_WEBHOOK_ID
+        sync: false
+      - key: CLOUDFLARE_ACCOUNT_ID
+        sync: false
+      - key: CLOUDFLARE_AI_TOKEN
+        sync: false
