@@ -16,7 +16,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="PayPal Tradesman API", lifespan=lifespan)
+app = FastAPI(title="Open Tradesman API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

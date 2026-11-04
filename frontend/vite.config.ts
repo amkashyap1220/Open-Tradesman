@@ -10,7 +10,7 @@ export default defineConfig({
       registerType: "autoUpdate",
       includeAssets: ["apple-touch-icon.png", "favicon.svg"],
       manifest: {
-        name: "PayPal Tradesman",
+        name: "Open Tradesman",
         short_name: "Tradesman",
         description: "Quotes, change orders and payments for tradespeople.",
         start_url: "/",

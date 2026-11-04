@@ -1,7 +1,7 @@
 // Cloudflare Worker serving the built PWA at tradesman.alexanderk.dev.
 // Deploy: npm run deploy  (or connect this repo in the Cloudflare dashboard with root dir "frontend").
 {
-  "name": "paypal-tradesman-app",
+  "name": "open-tradesman-app",
   "compatibility_date": "2026-11-01",
   "assets": {
     "directory": "./dist",

@@ -3,7 +3,7 @@
 # and a custom domain api.alexanderk.dev (CNAME in Cloudflare DNS, proxy off).
 services:
   - type: web
-    name: paypal-tradesman-api
+    name: open-tradesman-api
     runtime: python
     rootDir: backend
     buildCommand: pip install -r requirements.txt

@@ -1,4 +1,4 @@
-# PayPal Tradesman
+# Open Tradesman
 
 PayPal AI Hackathon entry by Alexander Kashyap.
 

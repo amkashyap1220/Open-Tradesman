@@ -1,7 +1,8 @@
-# PayPal Tradesman
+# Open Tradesman
 
 PayPal AI Hackathon entry. A tradesperson talks through a job in their own language; Claude drafts a priced, itemized estimate in the customer's language; PayPal invoices handle the deposit, change orders, and final payment.
 
+- **Name:** the product is **Open Tradesman**. Never put "PayPal" in the product name (titles, manifest, service or package names); "PayPal" only describes the integration and the hackathon.
 - **Deadline:** submissions close Nov 12, 2026. One summary lists 1:30 AM IST Nov 13 = **2:00 PM Central Nov 12**. Confirm on Devpost; plan to submit that morning.
 - **Hackathon rule that matters most:** the project must *meaningfully* use both PayPal and AI. Judged on technical implementation, design, impact, innovation, presentation.
 - **Submission needs:** public repo with open-source license (MIT, done), public YouTube demo under 3 minutes, English description, working demo or setup instructions.
