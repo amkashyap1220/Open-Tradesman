@@ -4,6 +4,7 @@ Docs: https://developer.paypal.com/docs/api/invoicing/v2/
 Flow per invoice: generate number -> create draft -> send -> (customer pays) -> webhook.
 """
 
+import json
 import time
 
 import httpx
@@ -116,20 +117,30 @@ class PayPalClient:
         r.raise_for_status()
 
     # --- webhooks ---------------------------------------------------------
-    def verify_webhook(self, headers: dict, event: dict) -> bool:
-        """Ask PayPal whether a webhook really came from PayPal."""
+    def verify_webhook(self, headers: dict, raw_body: bytes) -> bool:
+        """Ask PayPal whether a webhook really came from PayPal.
+
+        The event goes back to PayPal as the exact bytes we received. Parsing and
+        re-serializing it can change spacing, number formats or escaping, and then the
+        signature check fails even for genuine events.
+        """
+        if not self.webhook_id:
+            return False  # not configured: refuse rather than trust unsigned events
         h = {k.lower(): v for k, v in headers.items()}
-        body = {
+        fields = {
             "auth_algo": h.get("paypal-auth-algo"),
             "cert_url": h.get("paypal-cert-url"),
             "transmission_id": h.get("paypal-transmission-id"),
             "transmission_sig": h.get("paypal-transmission-sig"),
             "transmission_time": h.get("paypal-transmission-time"),
             "webhook_id": self.webhook_id,
-            "webhook_event": event,
         }
+        body = json.dumps(fields)[:-1] + ', "webhook_event": ' + raw_body.decode("utf-8") + "}"
         r = httpx.post(
-            f"{self.base}/v1/notifications/verify-webhook-signature", headers=self._headers(), json=body, timeout=20
+            f"{self.base}/v1/notifications/verify-webhook-signature",
+            headers=self._headers(),
+            content=body.encode("utf-8"),
+            timeout=20,
         )
         return r.status_code == 200 and r.json().get("verification_status") == "SUCCESS"
 

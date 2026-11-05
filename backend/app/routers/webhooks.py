@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -28,9 +29,10 @@ def mark_invoice_paid(paypal_invoice_id: str, session: Session) -> Invoice | Non
 
 @router.post("/paypal")
 async def paypal_webhook(request: Request, session: Session = Depends(get_session)):
-    event = await request.json()
-    if not paypal.verify_webhook(dict(request.headers), event):
+    raw = await request.body()
+    if not paypal.verify_webhook(dict(request.headers), raw):
         raise HTTPException(400, "Webhook signature check failed")
+    event = json.loads(raw)
     if event.get("event_type") == "INVOICING.INVOICE.PAID":
         inv_id = invoice_id_from_event(event)
         if inv_id:

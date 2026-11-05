@@ -1,5 +1,6 @@
 """Tests run without network: Claude and PayPal are mocked."""
 
+import json
 import os
 
 os.environ["DATABASE_URL"] = "sqlite:///./test.db"
@@ -238,3 +239,60 @@ def test_line_items_keep_their_order_after_an_edit(monkeypatch):
         assert ids == sorted(ids)
         c.patch(f"/api/line-items/{ids[0]}", json={"text_tradesperson": "editado"})
         assert [i["id"] for i in c.get(f"/api/jobs/{job['id']}").json()["line_items"]] == ids
+
+
+# ---------------------------------------------------------------- PayPal webhook
+def test_verify_webhook_sends_the_raw_event_bytes(monkeypatch):
+    from app.services import paypal as pp
+
+    client = pp.PayPalClient()
+    assert client.verify_webhook({}, b"{}") is False  # no PAYPAL_WEBHOOK_ID: refuse, no network
+
+    client.webhook_id = "WH-1"
+    monkeypatch.setattr(client, "_headers", lambda: {})
+    sent = {}
+
+    class R:
+        status_code = 200
+
+        def json(self):
+            return {"verification_status": "SUCCESS"}
+
+    def fake_post(url, **kw):
+        sent.update(kw)
+        return R()
+
+    monkeypatch.setattr(pp.httpx, "post", fake_post)
+    raw = b'{"id":"WH-EV","resource":{"invoice":{"id":"INV2-X","amount":{"value":"10.00"}}},"note":"se\\u00f1or"}'
+    assert client.verify_webhook({"PAYPAL-TRANSMISSION-ID": "t1"}, raw) is True
+    body = sent["content"]
+    assert raw in body  # byte-for-byte, not re-serialized
+    parsed = json.loads(body)
+    assert parsed["webhook_id"] == "WH-1" and parsed["transmission_id"] == "t1"
+
+
+def test_paid_webhook_flips_deposit_and_rejects_bad_signatures(monkeypatch):
+    from app.models import Customer, Invoice, Job
+    from app.routers import webhooks as wh
+
+    with Session(engine) as s:
+        cust = Customer(tradesperson_id=1, name="Wy", email="wy@example.com")
+        s.add(cust)
+        s.flush()
+        job = Job(tradesperson_id=1, customer_id=cust.id, status="estimate_sent")
+        s.add(job)
+        s.flush()
+        s.add(Invoice(job_id=job.id, kind="deposit", amount_cents=7200, paypal_invoice_id="INV2-WH-1", status="sent"))
+        s.commit()
+        job_id = job.id
+
+    event = json.dumps({"event_type": "INVOICING.INVOICE.PAID", "resource": {"invoice": {"id": "INV2-WH-1"}}})
+    with TestClient(app) as c:
+        monkeypatch.setattr(wh.paypal, "verify_webhook", lambda h, raw: False)
+        assert c.post("/api/webhooks/paypal", content=event).status_code == 400
+        assert c.get(f"/api/jobs/{job_id}").json()["job"]["status"] == "estimate_sent"
+
+        monkeypatch.setattr(wh.paypal, "verify_webhook", lambda h, raw: raw == event.encode())
+        assert c.post("/api/webhooks/paypal", content=event).json() == {"received": True}
+        d = c.get(f"/api/jobs/{job_id}").json()
+        assert d["job"]["status"] == "deposit_paid" and d["invoices"][0]["status"] == "paid"
