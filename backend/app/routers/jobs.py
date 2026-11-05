@@ -155,7 +155,14 @@ async def walkthrough(
         (UPLOADS / f"job{job.id}-{uuid.uuid4().hex[:8]}-{p.filename}").write_bytes(data)
 
     book = session.exec(select(PriceBookItem).where(PriceBookItem.tradesperson_id == tp.id)).all()
+    # Lines the tradesperson priced or edited stay; tell Claude so it doesn't add them again.
+    kept = session.exec(
+        select(LineItem).where(LineItem.job_id == job.id, LineItem.source == "manual").order_by(LineItem.id)
+    ).all()
     draft = claude.draft_estimate(
+        kept_lines=[
+            {"text": k.text_en, "text_customer": k.text_customer, "quantity": k.quantity, "unit": k.unit} for k in kept
+        ],
         transcript=transcript,
         photos=photo_data,
         price_book=[b.model_dump(exclude={"tradesperson_id"}) for b in book],
@@ -201,9 +208,10 @@ def edit_line_item(
         item.text_es = item.text_en = typed
     for field, value in changes.items():
         setattr(item, field, value)
+    if typed is not None or changes:
+        item.source = "manual"  # the tradesperson's line now: a redraft keeps it as is
     if body.unit_price_cents is not None:
         item.needs_price = False
-        item.source = "manual"
     session.add(AuditLog(job_id=item.job_id, actor="tradesperson", action="edit_line_item", detail=str(item_id)))
     session.commit()
     session.refresh(item)

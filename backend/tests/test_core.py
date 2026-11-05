@@ -296,3 +296,35 @@ def test_paid_webhook_flips_deposit_and_rejects_bad_signatures(monkeypatch):
         assert c.post("/api/webhooks/paypal", content=event).json() == {"received": True}
         d = c.get(f"/api/jobs/{job_id}").json()
         assert d["job"]["status"] == "deposit_paid" and d["invoices"][0]["status"] == "paid"
+
+
+# ---------------------------------------------------------------- redraft after answering questions
+def test_redraft_keeps_and_reports_lines_the_tradesperson_priced_or_edited(monkeypatch):
+    seen = []
+
+    def fake_draft(**kw):
+        seen.append(kw)
+        return FAKE_DRAFT
+
+    monkeypatch.setattr(claude, "draft_estimate", fake_draft)
+    with TestClient(app) as c:
+        job = c.post("/api/jobs", json={"customer_name": "Di", "customer_email": "di@example.com"}).json()
+        d = c.post(f"/api/jobs/{job['id']}/walkthrough", data={"notes": "baño"}).json()
+        assert seen[0]["kept_lines"] == []
+        unpriced = next(i for i in d["line_items"] if i["needs_price"])
+        priced = next(i for i in d["line_items"] if not i["needs_price"])
+        c.patch(f"/api/line-items/{unpriced['id']}", json={"unit_price_cents": 2500})
+        c.patch(f"/api/line-items/{priced['id']}", json={"text_tradesperson": "Parche grande"})  # text edit counts too
+
+        d = c.post(f"/api/jobs/{job['id']}/walkthrough", data={"notes": "baño\n¿Incluye la puerta? Sí"}).json()
+        kept = seen[1]["kept_lines"]
+        assert {k["text"] for k in kept} == {"Something odd", "Parche grande"}
+        items = d["line_items"]
+        manual = [i for i in items if i["source"] == "manual"]
+        assert {i["id"] for i in manual} == {unpriced["id"], priced["id"]}  # survived the redraft
+        assert next(i for i in manual if i["id"] == unpriced["id"])["unit_price_cents"] == 2500
+        assert len([i for i in items if i["source"] == "ai"]) == len(FAKE_DRAFT["line_items"])  # AI lines replaced, not stacked
+
+
+def test_estimate_prompt_forbids_asking_for_prices():
+    assert "Never ask for a price" in claude.ESTIMATE_SYSTEM

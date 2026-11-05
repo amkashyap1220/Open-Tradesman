@@ -37,6 +37,7 @@ export default function JobDetail() {
   const [answers, setAnswers] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [updateError, setUpdateError] = useState("");
   const [notice, setNotice] = useState("");
 
   const load = () => api.job(id).then(setD).catch((e) => setError(e.message));
@@ -44,14 +45,18 @@ export default function JobDetail() {
     load();
   }, [id]);
 
-  async function run(fn: () => Promise<unknown>) {
+  /** Runs an action and reloads the job. Returns false (and sets the error) if it failed. */
+  async function run(fn: () => Promise<unknown>, onError: (msg: string) => void = setError) {
     setBusy(true);
     setError("");
+    setUpdateError("");
     try {
       await fn();
       await load();
+      return true;
     } catch (e) {
-      setError((e as Error).message);
+      onError((e as Error).message);
+      return false;
     } finally {
       setBusy(false);
     }
@@ -62,8 +67,8 @@ export default function JobDetail() {
     const lines = d.questions.map((q, i) => (answers[i]?.trim() ? `${q[lang]} ${answers[i]}` : "")).filter(Boolean);
     const form = new FormData();
     form.append("notes", `${d.job.transcript}\n${lines.join("\n")}`);
-    await run(() => api.walkthrough(id, form));
-    setAnswers([]);
+    // Keep the answers if the update fails, so nothing typed is lost.
+    if (await run(() => api.walkthrough(id, form), setUpdateError)) setAnswers([]);
   }
 
   if (!d) return <p className="p-4 text-slate-soft">{error || "…"}</p>;
@@ -83,18 +88,20 @@ export default function JobDetail() {
       {d.questions.length > 0 && d.job.status === "draft" && (
         <section className="slip border-l-4 border-carbon p-4">
           <h2 className="mb-2 font-cond text-xl font-semibold">{t.questions}</h2>
+          {d.totals.needs_price > 0 && <p className="mb-3 text-flag">{t.priceHint(d.totals.needs_price)}</p>}
           {d.questions.map((q, i) => (
             <label key={i} className="mb-3 block">
               <span className="text-[17px]">{q[lang]}</span>
-              <input className="mt-1 w-full rounded-[4px] border border-rule px-3 py-2" placeholder={t.answer}
-                value={answers[i] ?? ""}
+              <input className="mt-1 w-full rounded-[4px] border border-rule px-3 py-2 disabled:bg-concrete" placeholder={t.answer}
+                value={answers[i] ?? ""} disabled={busy}
                 onChange={(e) => { const a = [...answers]; a[i] = e.target.value; setAnswers(a); }} />
             </label>
           ))}
           <button disabled={busy || !answers.some((a) => a?.trim())} onClick={updateWithAnswers}
-            className="font-semibold text-carbon disabled:opacity-40">
-            {t.updateEstimate}
+            className="min-h-12 font-semibold text-carbon disabled:opacity-40" aria-busy={busy}>
+            {busy ? t.updating : t.updateEstimate}
           </button>
+          {updateError && <p className="mt-2 text-flag" role="alert">{updateError}</p>}
         </section>
       )}
 

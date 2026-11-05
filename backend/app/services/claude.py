@@ -151,7 +151,10 @@ Rules:
 - Photos are context only. Do not estimate sizes from photos.
 - Every text has a Spanish and an English version for the tradesperson (es / en, text_es / text_en) and a version for the customer in the customer's language. Write all of them; the two tradesperson versions say the same thing. Use the plain trade term a homeowner would understand. Set low_confidence_translation=true when a trade term has no clear equivalent.
 - List every assumption you made (e.g. "2 coats", "customer supplies paint").
-- Ask at most 3 questions, only about things that change the price or scope."""
+- Ask at most 3 questions, only about scope or quantities that change the estimate.
+- Never ask for a price, rate or cost, and never use a number from the transcript as a price. Work with no price-book match gets price_book_item_id = null; the tradesperson types its price on that line in the app. Line texts describe only the work, never prices or whether a price is missing (the app shows that).
+- Don't ask anything the transcript already answers. Answers to earlier questions are appended to the transcript.
+- "Lines already on the estimate" were priced or edited by the tradesperson and stay as they are. Never output them, or a variant of them, again."""
 
 
 def draft_estimate(
@@ -161,6 +164,7 @@ def draft_estimate(
     price_book: list[dict],
     customer_lang: str,
     billing_mode: str,
+    kept_lines: list[dict] | None = None,
 ) -> dict:
     content: list[dict] = [_image_block(data, mt) for data, mt in photos[:6]]
     content.append(
@@ -170,6 +174,7 @@ def draft_estimate(
                 f"Customer language: {customer_lang}\n"
                 f"Billing mode: {'fixed price' if billing_mode == 'fixed' else 'time and materials'}\n\n"
                 f"Price book (JSON):\n{json.dumps(price_book, ensure_ascii=False)}\n\n"
+                f"Lines already on the estimate (JSON, do not repeat):\n{json.dumps(kept_lines or [], ensure_ascii=False)}\n\n"
                 f"Walkthrough transcript:\n{transcript}"
             ),
         }
