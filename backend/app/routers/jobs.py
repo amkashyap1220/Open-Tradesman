@@ -96,8 +96,9 @@ def list_jobs(tp: Tradesperson = Depends(current_tradesperson), session: Session
 
 
 def _job_detail(job: Job, session: Session) -> dict:
-    items = session.exec(select(LineItem).where(LineItem.job_id == job.id)).all()
-    invoices = session.exec(select(Invoice).where(Invoice.job_id == job.id)).all()
+    # Explicit order: Postgres doesn't keep insertion order (an edited row moves to the end).
+    items = session.exec(select(LineItem).where(LineItem.job_id == job.id).order_by(LineItem.id)).all()
+    invoices = session.exec(select(Invoice).where(Invoice.job_id == job.id).order_by(Invoice.id)).all()
     customer = session.get(Customer, job.customer_id)
     return {
         "job": job.model_dump(exclude={"ai_questions", "ai_assumptions"}),
@@ -213,7 +214,7 @@ def edit_line_item(
 @router.post("/jobs/{job_id}/send")
 def send_estimate(job_id: int, tp: Tradesperson = Depends(current_tradesperson), session: Session = Depends(get_session)):
     job = _get_job(job_id, tp, session)
-    items = session.exec(select(LineItem).where(LineItem.job_id == job.id)).all()
+    items = session.exec(select(LineItem).where(LineItem.job_id == job.id).order_by(LineItem.id)).all()
     totals = job_totals(job, items)
     if not items:
         raise HTTPException(400, "The estimate has no line items yet.")

@@ -6,7 +6,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    database_url: str = "sqlite:///./dev.db"
+    database_url: str = "sqlite:///./dev.db"  # app traffic (Neon: the pooled -pooler URL)
+    database_url_unpooled: str = ""  # schema changes (Neon: the direct URL); falls back to database_url
     database_url_readonly: str = ""
 
     anthropic_api_key: str = ""

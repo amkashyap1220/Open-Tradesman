@@ -16,8 +16,8 @@ Build window: Nov 3 to Nov 12, 2026. Core build ends Nov 10; Nov 11–12 are for
 - [x] PayPal sandbox: one business account (tradesperson), one personal account (customer)
 - [x] `backend/.env` filled; `python -m scripts.paypal_smoke <buyer>` creates an invoice and the buyer pays it at sandbox.paypal.com
 - [x] Anthropic API key working: create a job locally, type notes in Spanish, get a drafted estimate
-- [ ] Postgres on Supabase or Neon; `DATABASE_URL` set on Render
-- [ ] API deployed on Render; `api.alexanderk.dev` CNAME in Cloudflare DNS
+- [x] Postgres on Neon (project `open-tradesman`, branch `production`, us-east-2); verified with `scripts/db_check.py` and the API end to end
+- [ ] API deployed on Render with `DATABASE_URL` (pooled) and `DATABASE_URL_UNPOOLED` (direct) from the repo-root `.env.local`; `api.alexanderk.dev` CNAME in Cloudflare DNS
 - [ ] App deployed to `tradesman.alexanderk.dev` with `VITE_API_URL=https://api.alexanderk.dev`
 - [ ] PayPal webhook registered for `INVOICING.INVOICE.PAID` to `/api/webhooks/paypal`; `PAYPAL_WEBHOOK_ID` set
 - [ ] Confirm the Devpost deadline time and rules on naming

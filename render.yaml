@@ -5,6 +5,8 @@ services:
   - type: web
     name: open-tradesman-api
     runtime: python
+    region: ohio   # same area as the Neon database (aws us-east-2)
+    plan: free     # sleeps after 15 min idle; first request after that takes ~30-60 s
     rootDir: backend
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
@@ -20,7 +22,9 @@ services:
         value: claude-sonnet-5-5
       - key: CLAUDE_MODEL_FAST
         value: claude-haiku-5-5
-      - key: DATABASE_URL
+      - key: DATABASE_URL           # Neon pooled URL (-pooler host)
+        sync: false
+      - key: DATABASE_URL_UNPOOLED  # Neon direct URL, used only to create tables at startup
         sync: false
       - key: DATABASE_URL_READONLY
         sync: false

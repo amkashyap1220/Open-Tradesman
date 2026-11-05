@@ -193,3 +193,48 @@ def test_typed_title_is_not_translated():
     with TestClient(app) as c:
         job = c.post("/api/jobs", json={"customer_name": "Al", "customer_email": "al@example.com", "title": "Casa de Al"}).json()
         assert job["title_es"] == job["title_en"] == "Casa de Al"
+
+
+# ---------------------------------------------------------------- database URLs
+@pytest.mark.parametrize(
+    "given,expected",
+    [
+        ("postgres://u:p@h/db?sslmode=require", "postgresql+psycopg://u:p@h/db?sslmode=require"),
+        ("postgresql://u:p@h/db", "postgresql+psycopg://u:p@h/db"),
+        ("postgresql+psycopg://u:p@h/db", "postgresql+psycopg://u:p@h/db"),
+        ("sqlite:///./dev.db", "sqlite:///./dev.db"),
+    ],
+)
+def test_database_url_uses_psycopg3(given, expected):
+    from app.db import normalize_url
+
+    assert normalize_url(given) == expected
+
+
+def test_postgres_engine_builds_without_connecting():
+    from app.db import make_engine
+
+    e = make_engine("postgres://u:p@example.invalid/db?sslmode=require")
+    assert e.dialect.driver == "psycopg" and e.pool._pre_ping
+
+
+def test_init_db_uses_direct_url_for_ddl(monkeypatch, tmp_path):
+    import app.db as db
+
+    direct = tmp_path / "direct.db"
+    monkeypatch.setattr(db._settings, "database_url_unpooled", f"sqlite:///{direct}")
+    db.init_db()
+    from sqlalchemy import create_engine, inspect
+
+    assert "job" in inspect(create_engine(f"sqlite:///{direct}")).get_table_names()
+
+
+def test_line_items_keep_their_order_after_an_edit(monkeypatch):
+    monkeypatch.setattr(claude, "draft_estimate", lambda **kw: FAKE_DRAFT)
+    with TestClient(app) as c:
+        job = c.post("/api/jobs", json={"customer_name": "Cy", "customer_email": "cy@example.com"}).json()
+        d = c.post(f"/api/jobs/{job['id']}/walkthrough", data={"notes": "x"}).json()
+        ids = [i["id"] for i in d["line_items"]]
+        assert ids == sorted(ids)
+        c.patch(f"/api/line-items/{ids[0]}", json={"text_tradesperson": "editado"})
+        assert [i["id"] for i in c.get(f"/api/jobs/{job['id']}").json()["line_items"]] == ids
