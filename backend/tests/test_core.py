@@ -20,9 +20,9 @@ from sqlmodel import Session
 # ---------------------------------------------------------------- pure guardrails
 def test_price_book_is_the_only_source_of_prices():
     draft = [
-        {"kind": "labor", "text_tradesperson": "a", "text_customer": "a", "quantity": 2, "unit": "hour", "price_book_item_id": 1},
-        {"kind": "flat", "text_tradesperson": "b", "text_customer": "b", "quantity": 1, "unit": "each", "price_book_item_id": None},
-        {"kind": "flat", "text_tradesperson": "c", "text_customer": "c", "quantity": 1, "unit": "each", "price_book_item_id": 999},
+        {"kind": "labor", "text_es": "a", "text_en": "a", "text_customer": "a", "quantity": 2, "unit": "hour", "price_book_item_id": 1},
+        {"kind": "flat", "text_es": "b", "text_en": "b", "text_customer": "b", "quantity": 1, "unit": "each", "price_book_item_id": None},
+        {"kind": "flat", "text_es": "c", "text_en": "c", "text_customer": "c", "quantity": 1, "unit": "each", "price_book_item_id": 999},
     ]
     out = claude.apply_price_book(draft, {1: 6500})
     assert out[0]["unit_price_cents"] == 6500 and not out[0]["needs_price"]
@@ -52,13 +52,13 @@ def test_guard_sql_adds_limit():
 
 # ---------------------------------------------------------------- API flow
 FAKE_DRAFT = {
-    "title": {"tradesperson": "Baño", "customer": "Bathroom repair"},
+    "title": {"es": "Baño", "en": "Bathroom", "customer": "Bathroom repair"},
     "line_items": [
-        {"kind": "flat", "text_tradesperson": "Parchar hoyo", "text_customer": "Patch drywall hole", "quantity": 2, "unit": "each", "price_book_item_id": 3},
-        {"kind": "flat", "text_tradesperson": "Algo raro", "text_customer": "Something odd", "quantity": 1, "unit": "each", "price_book_item_id": None},
+        {"kind": "flat", "text_es": "Parchar hoyo", "text_en": "Patch hole", "text_customer": "Patch drywall hole", "quantity": 2, "unit": "each", "price_book_item_id": 3},
+        {"kind": "flat", "text_es": "Algo raro", "text_en": "Something odd", "text_customer": "Something odd", "quantity": 1, "unit": "each", "price_book_item_id": None},
     ],
-    "assumptions": [{"tradesperson": "2 manos", "customer": "2 coats"}],
-    "questions": [{"tradesperson": "¿Incluye la puerta?", "customer": "Door included?"}],
+    "assumptions": [{"es": "2 manos", "en": "2 coats", "customer": "2 coats"}],
+    "questions": [{"es": "¿Incluye la puerta?", "en": "Include the door?", "customer": "Door included?"}],
 }
 
 
@@ -109,3 +109,87 @@ def test_walkthrough_edit_send_and_webhook(monkeypatch):
 
         summary = c.get("/api/money/summary").json()
         assert summary["paid_this_month_cents"] == 7200
+
+
+# ---------------------------------------------------------------- structured outputs
+def test_strict_schema_closes_every_object():
+    s = claude.strict_schema(claude.ESTIMATE_TOOL["input_schema"])
+    assert s["additionalProperties"] is False
+    item = s["properties"]["line_items"]["items"]
+    assert item["additionalProperties"] is False
+    assert set(item["required"]) == set(item["properties"])  # optional fields become required
+    assert s["properties"]["title"]["additionalProperties"] is False
+    # the original schema is not mutated
+    assert "additionalProperties" not in claude.ESTIMATE_TOOL["input_schema"]
+
+
+class _Block:
+    def __init__(self, type_, text=""):
+        self.type, self.text = type_, text
+
+
+class _Resp:
+    def __init__(self, stop_reason, blocks):
+        self.stop_reason, self.content = stop_reason, blocks
+
+
+def _fake_client(resp, seen):
+    class Messages:
+        def create(self, **kw):
+            seen.update(kw)
+            return resp
+
+    class Beta:
+        messages = Messages()
+
+    class C:
+        messages = Messages()
+        beta = Beta()
+
+    return C()
+
+
+def test_structured_parses_json_and_sends_schema(monkeypatch):
+    seen = {}
+    resp = _Resp("end_turn", [_Block("thinking"), _Block("text", '{"sql": "select 1"}')])
+    monkeypatch.setattr(claude, "client", lambda: _fake_client(resp, seen))
+    out = claude._structured("claude-haiku-5-5", "sys", [], claude.SQL_TOOL, effort="low")
+    assert out == {"sql": "select 1"}
+    assert "tool_choice" not in seen and "tools" not in seen
+    assert seen["output_config"]["format"]["type"] == "json_schema"
+    assert seen["output_config"]["effort"] == "low"
+
+
+@pytest.mark.parametrize("stop", ["refusal", "max_tokens"])
+def test_structured_raises_on_unusable_answer(monkeypatch, stop):
+    resp = _Resp(stop, [_Block("text", "{")])
+    monkeypatch.setattr(claude, "client", lambda: _fake_client(resp, {}))
+    with pytest.raises(claude.ClaudeUnavailable):
+        claude._structured("claude-sonnet-5-5", "sys", [], claude.SQL_TOOL)
+
+
+# ---------------------------------------------------------------- both app languages
+def test_ai_text_is_stored_in_both_app_languages(monkeypatch):
+    monkeypatch.setattr(claude, "draft_estimate", lambda **kw: FAKE_DRAFT)
+    with TestClient(app) as c:
+        assert c.patch("/api/me", json={"language": "fr"}).status_code == 422  # only es / en
+        assert c.patch("/api/me", json={"language": "en"}).json()["language"] == "en"
+        assert c.get("/api/me").json()["language"] == "en"
+        c.patch("/api/me", json={"language": "es"})  # leave the shared test DB as seeded
+
+        job = c.post("/api/jobs", json={"customer_name": "Bo Kim", "customer_email": "bo@example.com"}).json()
+        d = c.post(f"/api/jobs/{job['id']}/walkthrough", data={"notes": "dos hoyos"}).json()
+        assert (d["job"]["title_es"], d["job"]["title_en"]) == ("Baño", "Bathroom")
+        assert d["questions"][0]["en"] == "Include the door?"
+        item = d["line_items"][0]
+        assert (item["text_es"], item["text_en"]) == ("Parchar hoyo", "Patch hole")
+
+        # Text the tradesperson types is theirs: stored as typed in both, never translated.
+        item = c.patch(f"/api/line-items/{item['id']}", json={"text_tradesperson": "Parche grande"}).json()
+        assert item["text_es"] == item["text_en"] == "Parche grande"
+
+
+def test_typed_title_is_not_translated():
+    with TestClient(app) as c:
+        job = c.post("/api/jobs", json={"customer_name": "Al", "customer_email": "al@example.com", "title": "Casa de Al"}).json()
+        assert job["title_es"] == job["title_en"] == "Casa de Al"

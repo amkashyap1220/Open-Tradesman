@@ -32,7 +32,7 @@ CI (`.github/workflows/ci.yml`) runs pytest, typecheck, and build on every push.
 
 ## Where things live
 
-- `backend/app/services/claude.py`: every Claude call. Each call forces one tool with a JSON schema (`_call_tool`), so responses are always structured.
+- `backend/app/services/claude.py`: every Claude call. Each call uses structured outputs with a JSON schema (`_structured`), so responses are always schema-valid JSON. Claude 5.5 models reject forced `tool_choice`, so don't go back to tools for this.
 - `backend/app/services/paypal.py`: PayPal client (OAuth, invoices, reminders, webhook verification).
 - `backend/app/services/stt.py`: speech-to-text, swappable.
 - `backend/app/routers/`: `jobs.py` (jobs, walkthrough, line items, send), `money.py` (summary, ask, receipts), `webhooks.py`.

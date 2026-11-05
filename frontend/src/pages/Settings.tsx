@@ -21,6 +21,7 @@ export default function Settings() {
           <option value="es">Español</option>
           <option value="en">English</option>
         </select>
+        <span className="mt-1 block text-sm text-slate-soft">{t.languageHint}</span>
       </label>
 
       <section>

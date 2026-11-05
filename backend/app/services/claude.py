@@ -1,8 +1,9 @@
 """All Claude calls live here.
 
-Every call forces a tool with a JSON schema, so the backend always gets structured
-data back instead of prose to parse. Guardrails (prices, SQL) are enforced in plain
-Python AFTER the model answers, never trusted to the prompt alone.
+Every call uses structured outputs (output_config.format = json_schema), so the backend
+always gets schema-valid JSON back instead of prose to parse. (Claude 5.5 models reject
+forced tool_choice, so we don't use tools for this.) Guardrails (prices, SQL) are
+enforced in plain Python AFTER the model answers, never trusted to the prompt alone.
 """
 
 import base64
@@ -24,19 +25,61 @@ def client() -> anthropic.Anthropic:
     return _client
 
 
-def _call_tool(model: str, system: str, content: list[dict], tool: dict, max_tokens: int = 4096) -> dict:
-    resp = client().messages.create(
+class ClaudeUnavailable(RuntimeError):
+    """Claude answered but not with usable output (refusal, cut off, no JSON)."""
+
+
+def strict_schema(schema: Any) -> Any:
+    """Make a JSON schema acceptable to structured outputs.
+
+    Every object gets additionalProperties: false and lists all of its properties as
+    required (missing values are expressed as null in the schema instead).
+    """
+    if isinstance(schema, list):
+        return [strict_schema(s) for s in schema]
+    if not isinstance(schema, dict):
+        return schema
+    out = {k: strict_schema(v) for k, v in schema.items()}
+    if out.get("type") == "object" and "properties" in out:
+        out["additionalProperties"] = False
+        out["required"] = list(out["properties"].keys())
+    return out
+
+
+def _structured(
+    model: str,
+    system: str,
+    content: list[dict],
+    spec: dict,
+    *,
+    max_tokens: int = 16000,
+    effort: str | None = None,
+) -> dict:
+    """One Claude call whose reply is JSON matching spec["input_schema"]."""
+    output_config: dict[str, Any] = {"format": {"type": "json_schema", "schema": strict_schema(spec["input_schema"])}}
+    if effort:
+        output_config["effort"] = effort
+    kwargs: dict[str, Any] = dict(
         model=model,
         max_tokens=max_tokens,
-        system=system,
-        tools=[tool],
-        tool_choice={"type": "tool", "name": tool["name"]},
+        system=f"{system}\n\nYour reply is the JSON for: {spec['description']}",
         messages=[{"role": "user", "content": content}],
+        output_config=output_config,
     )
-    for block in resp.content:
-        if block.type == "tool_use":
-            return block.input
-    raise RuntimeError("Claude did not return the expected tool call")
+    if model.startswith("claude-sonnet-5-5"):
+        # Server-side fallback: if a safety classifier declines, the API retries on another model.
+        resp = client().beta.messages.create(betas=["server-side-fallback-2026-07-01"], fallbacks="default", **kwargs)
+    else:
+        resp = client().messages.create(**kwargs)
+
+    if resp.stop_reason == "refusal":
+        raise ClaudeUnavailable("Claude declined this request")
+    if resp.stop_reason == "max_tokens":
+        raise ClaudeUnavailable("Claude's answer was cut off (max_tokens)")
+    text = next((b.text for b in resp.content if b.type == "text"), None)
+    if text is None:
+        raise ClaudeUnavailable("Claude returned no JSON")
+    return json.loads(text)
 
 
 def _image_block(data: bytes, media_type: str) -> dict:
@@ -49,10 +92,17 @@ def _image_block(data: bytes, media_type: str) -> dict:
 # --------------------------------------------------------------------------
 # 1. Draft an estimate from a walkthrough
 # --------------------------------------------------------------------------
+# The tradesperson can switch the app between Spanish and English at any time, so every
+# AI-written text they see comes back in both. The customer gets their own language.
+TP_LANGS = ("es", "en")
 BILINGUAL = {
     "type": "object",
-    "properties": {"tradesperson": {"type": "string"}, "customer": {"type": "string"}},
-    "required": ["tradesperson", "customer"],
+    "properties": {
+        "es": {"type": "string", "description": "for the tradesperson, in Spanish"},
+        "en": {"type": "string", "description": "for the tradesperson, in English"},
+        "customer": {"type": "string", "description": "for the customer, in the customer's language"},
+    },
+    "required": ["es", "en", "customer"],
 }
 
 ESTIMATE_TOOL = {
@@ -68,8 +118,9 @@ ESTIMATE_TOOL = {
                     "type": "object",
                     "properties": {
                         "kind": {"type": "string", "enum": ["labor", "material", "flat"]},
-                        "text_tradesperson": {"type": "string"},
-                        "text_customer": {"type": "string"},
+                        "text_es": {"type": "string", "description": "for the tradesperson, in Spanish"},
+                        "text_en": {"type": "string", "description": "for the tradesperson, in English"},
+                        "text_customer": {"type": "string", "description": "for the customer, in the customer's language"},
                         "quantity": {"type": "number"},
                         "unit": {"type": "string"},
                         "price_book_item_id": {
@@ -78,7 +129,7 @@ ESTIMATE_TOOL = {
                         },
                         "low_confidence_translation": {"type": "boolean"},
                     },
-                    "required": ["kind", "text_tradesperson", "text_customer", "quantity", "unit", "price_book_item_id"],
+                    "required": ["kind", "text_es", "text_en", "text_customer", "quantity", "unit", "price_book_item_id"],
                 },
             },
             "assumptions": {"type": "array", "items": BILINGUAL},
@@ -98,7 +149,7 @@ Rules:
 - Use ONLY items from the price book. Reference them by id. If nothing fits, set price_book_item_id to null; never guess a price.
 - Never invent measurements. Quantities come from the transcript. If a needed dimension or count is missing, add a question instead.
 - Photos are context only. Do not estimate sizes from photos.
-- Write text_tradesperson in the tradesperson's language and text_customer in the customer's language. Use the plain trade term a homeowner would understand. Set low_confidence_translation=true when a trade term has no clear equivalent.
+- Every text has a Spanish and an English version for the tradesperson (es / en, text_es / text_en) and a version for the customer in the customer's language. Write all of them; the two tradesperson versions say the same thing. Use the plain trade term a homeowner would understand. Set low_confidence_translation=true when a trade term has no clear equivalent.
 - List every assumption you made (e.g. "2 coats", "customer supplies paint").
 - Ask at most 3 questions, only about things that change the price or scope."""
 
@@ -108,7 +159,6 @@ def draft_estimate(
     transcript: str,
     photos: list[tuple[bytes, str]],
     price_book: list[dict],
-    tradesperson_lang: str,
     customer_lang: str,
     billing_mode: str,
 ) -> dict:
@@ -117,14 +167,14 @@ def draft_estimate(
         {
             "type": "text",
             "text": (
-                f"Tradesperson language: {tradesperson_lang}\nCustomer language: {customer_lang}\n"
+                f"Customer language: {customer_lang}\n"
                 f"Billing mode: {'fixed price' if billing_mode == 'fixed' else 'time and materials'}\n\n"
                 f"Price book (JSON):\n{json.dumps(price_book, ensure_ascii=False)}\n\n"
                 f"Walkthrough transcript:\n{transcript}"
             ),
         }
     )
-    return _call_tool(get_settings().claude_model_smart, ESTIMATE_SYSTEM, content, ESTIMATE_TOOL)
+    return _structured(get_settings().claude_model_smart, ESTIMATE_SYSTEM, content, ESTIMATE_TOOL)
 
 
 def apply_price_book(draft_items: list[dict], price_book: dict[int, int]) -> list[dict]:
@@ -140,7 +190,8 @@ def apply_price_book(draft_items: list[dict], price_book: dict[int, int]) -> lis
         out.append(
             {
                 "kind": it.get("kind", "flat"),
-                "text_tradesperson": it.get("text_tradesperson", ""),
+                "text_es": it.get("text_es", ""),
+                "text_en": it.get("text_en", ""),
                 "text_customer": it.get("text_customer", ""),
                 "quantity": float(it.get("quantity") or 1),
                 "unit": it.get("unit", "each"),
@@ -194,7 +245,7 @@ def read_receipt(image: bytes, media_type: str, open_jobs: list[dict]) -> dict:
             + "\n\nRead this receipt. Suggest a job per line only when it clearly fits; otherwise null.",
         },
     ]
-    return _call_tool(get_settings().claude_model_smart, "You read materials receipts for tradespeople.", content, RECEIPT_TOOL)
+    return _structured(get_settings().claude_model_smart, "You read materials receipts for tradespeople.", content, RECEIPT_TOOL)
 
 
 # --------------------------------------------------------------------------
@@ -246,22 +297,24 @@ def guard_sql(sql: str) -> str:
 
 
 def question_to_sql(question: str, tp_id: int) -> str:
-    sql = _call_tool(
+    sql = _structured(
         get_settings().claude_model_fast,
         "You write one SQL SELECT for SQLite/Postgres-compatible syntax.\n" + SCHEMA_HINT.format(tp_id=tp_id),
         [{"type": "text", "text": question}],
         SQL_TOOL,
-        max_tokens=1024,
+        max_tokens=4096,
+        effort="low",
     )["sql"]
     return guard_sql(sql)
 
 
 def phrase_answer(question: str, rows: list[dict[str, Any]], language: str) -> str:
-    return _call_tool(
+    return _structured(
         get_settings().claude_model_fast,
         f"Answer briefly in the language '{language}', using only the numbers in the results. "
         "Show money as dollars. If results are empty, say there's nothing matching.",
         [{"type": "text", "text": f"Question: {question}\nResults (JSON): {json.dumps(rows, default=str)}"}],
         ANSWER_TOOL,
-        max_tokens=512,
+        max_tokens=4096,
+        effort="low",
     )["text"]

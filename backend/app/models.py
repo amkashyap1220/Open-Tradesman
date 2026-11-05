@@ -44,15 +44,19 @@ class Job(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     tradesperson_id: int = Field(foreign_key="tradesperson.id")
     customer_id: int = Field(foreign_key="customer.id")
-    title: str = ""
+    title: str = ""  # customer-facing title (customer's language)
+    # Tradesperson-facing title in both app languages. AI-written titles are translated;
+    # a title the tradesperson typed is stored as typed in both.
+    title_es: str = ""
+    title_en: str = ""
     address: str = ""
     # draft -> estimate_sent -> deposit_paid -> in_progress -> invoiced -> paid
     status: str = "draft"
     billing_mode: str = "fixed"  # "fixed" or "tm" (time and materials)
     tax_rate_pct: float = 0.0
     transcript: str = ""
-    ai_questions: str = "[]"  # JSON list of {tradesperson, customer}
-    ai_assumptions: str = "[]"  # JSON list of {tradesperson, customer}
+    ai_questions: str = "[]"  # JSON list of {es, en, customer}
+    ai_assumptions: str = "[]"  # JSON list of {es, en, customer}
     created_at: datetime = Field(default_factory=now)
 
 
@@ -61,7 +65,10 @@ class LineItem(SQLModel, table=True):
     job_id: int = Field(foreign_key="job.id")
     change_order_id: Optional[int] = Field(default=None, foreign_key="changeorder.id")
     kind: str  # labor, material, flat
-    text_tradesperson: str
+    # Tradesperson-facing text in both app languages (AI-translated; text the
+    # tradesperson typed is stored as typed in both), plus the customer's version.
+    text_es: str
+    text_en: str
     text_customer: str
     quantity: float = 1.0
     unit: str = "each"

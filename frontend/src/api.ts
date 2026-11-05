@@ -20,12 +20,20 @@ const json = (body: unknown): RequestInit => ({
   body: JSON.stringify(body),
 });
 
-export type Bilingual = { tradesperson: string; customer: string };
+export type AppLang = "es" | "en";
+
+/** AI-written text: one version per app language for the tradesperson, one for the customer. */
+export type Bilingual = { es: string; en: string; customer: string };
+
+type Titled = { title: string; title_es: string; title_en: string };
+/** Job title for the tradesperson in the current app language. */
+export const myTitle = (j: Titled, lang: AppLang) => (lang === "es" ? j.title_es : j.title_en) || j.title;
 
 export type LineItem = {
   id: number;
   kind: string;
-  text_tradesperson: string;
+  text_es: string;
+  text_en: string;
   text_customer: string;
   quantity: number;
   unit: string;
@@ -45,16 +53,15 @@ export type Invoice = {
 
 export type Totals = { subtotal_cents: number; tax_cents: number; total_cents: number; needs_price: number };
 
-export type JobSummary = Totals & {
+export type JobSummary = Totals & Titled & {
   id: number;
-  title: string;
   status: string;
   customer_name: string;
   billing_mode: "fixed" | "tm";
 };
 
 export type JobDetail = {
-  job: { id: number; title: string; status: string; billing_mode: string; transcript: string; address: string };
+  job: Titled & { id: number; status: string; billing_mode: string; transcript: string; address: string };
   customer: { name: string; email: string; language: string };
   questions: Bilingual[];
   assumptions: Bilingual[];
@@ -72,7 +79,16 @@ export type MoneySummary = {
 
 export type PriceBookItem = { id: number; trade: string; name: string; unit: string; price_cents: number };
 
+export type Me = { id: number; name: string; business_name: string; language: AppLang };
+
 export const api = {
+  me: () => request<Me>("/api/me"),
+  updateMe: (body: Partial<Pick<Me, "language">>) =>
+    request<Me>("/api/me", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
   jobs: () => request<JobSummary[]>("/api/jobs"),
   job: (id: number) => request<JobDetail>(`/api/jobs/${id}`),
   createJob: (body: {

@@ -1,4 +1,5 @@
-import { createContext, useContext, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { api } from "./api";
 
 // The app speaks the tradesperson's language. Customer-facing text comes from the AI instead.
 const strings = {
@@ -61,6 +62,7 @@ const strings = {
     askButton: "Preguntar",
     priceBook: "Lista de precios",
     language: "Idioma de la app",
+    languageHint: "Cambia toda la app, incluido lo que escribe la IA.",
     status: {
       draft: "Borrador",
       estimate_sent: "Presupuesto enviado",
@@ -129,6 +131,7 @@ const strings = {
     askButton: "Ask",
     priceBook: "Price book",
     language: "App language",
+    languageHint: "Changes the whole app, including what the AI writes.",
     status: {
       draft: "Draft",
       estimate_sent: "Estimate sent",
@@ -161,15 +164,41 @@ function initialLang(): Lang {
 
 export function I18nProvider({ children }: { children: ReactNode }) {
   const [lang, setLangState] = useState<Lang>(initialLang);
-  const setLang = (l: Lang) => {
+
+  // Apply a language locally: state, this phone's storage, and <html lang>.
+  const apply = (l: Lang) => {
     setLangState(l);
     try {
       localStorage.setItem("lang", l);
     } catch {
       /* storage unavailable */
     }
-    document.documentElement.lang = l;
   };
+
+  useEffect(() => {
+    document.documentElement.lang = lang;
+  }, [lang]);
+
+  // The account's saved language wins over this phone's last choice.
+  useEffect(() => {
+    api
+      .me()
+      .then((me) => {
+        if (me.language === "es" || me.language === "en") apply(me.language);
+      })
+      .catch(() => {
+        /* offline: keep the local choice */
+      });
+  }, []);
+
+  // Changing it also tells the backend, so the AI writes the tradesperson's text in this language.
+  const setLang = (l: Lang) => {
+    apply(l);
+    api.updateMe({ language: l }).catch(() => {
+      /* offline: the next change or reload will sync */
+    });
+  };
+
   return <Ctx.Provider value={{ t: strings[lang] as Strings, lang, setLang }}>{children}</Ctx.Provider>;
 }
 

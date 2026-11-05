@@ -15,7 +15,7 @@ Build window: Nov 3 to Nov 12, 2026. Core build ends Nov 10; Nov 11–12 are for
 
 - [x] PayPal sandbox: one business account (tradesperson), one personal account (customer)
 - [x] `backend/.env` filled; `python -m scripts.paypal_smoke <buyer>` creates an invoice and the buyer pays it at sandbox.paypal.com
-- [ ] Anthropic API key working: create a job locally, type notes in Spanish, get a drafted estimate
+- [x] Anthropic API key working: create a job locally, type notes in Spanish, get a drafted estimate
 - [ ] Postgres on Supabase or Neon; `DATABASE_URL` set on Render
 - [ ] API deployed on Render; `api.alexanderk.dev` CNAME in Cloudflare DNS
 - [ ] App deployed to `tradesman.alexanderk.dev` with `VITE_API_URL=https://api.alexanderk.dev`

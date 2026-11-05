@@ -2,6 +2,7 @@ import json
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Literal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
@@ -22,6 +23,23 @@ UPLOADS = Path("uploads")  # TODO: move to object storage (Supabase Storage / R2
 
 @router.get("/me")
 def me(tp: Tradesperson = Depends(current_tradesperson)):
+    return tp
+
+
+class MePatch(BaseModel):
+    language: Literal["es", "en"] | None = None  # the app's and the AI's language for the tradesperson
+
+
+@router.patch("/me")
+def update_me(body: MePatch, tp: Tradesperson = Depends(current_tradesperson), session: Session = Depends(get_session)):
+    changes = body.model_dump(exclude_none=True)
+    for field, value in changes.items():
+        setattr(tp, field, value)
+    if changes:
+        session.add(AuditLog(actor="tradesperson", action="update_settings", detail=json.dumps(changes)))
+    session.add(tp)
+    session.commit()
+    session.refresh(tp)
     return tp
 
 
@@ -54,6 +72,8 @@ def create_job(body: NewJob, tp: Tradesperson = Depends(current_tradesperson), s
         tradesperson_id=tp.id,
         customer_id=customer.id,
         title=body.title,
+        title_es=body.title,  # typed by the tradesperson: kept as typed, not translated
+        title_en=body.title,
         address=body.address,
         billing_mode=body.billing_mode,
         tax_rate_pct=body.tax_rate_pct,
@@ -138,7 +158,6 @@ async def walkthrough(
         transcript=transcript,
         photos=photo_data,
         price_book=[b.model_dump(exclude={"tradesperson_id"}) for b in book],
-        tradesperson_lang=tp.language,
         customer_lang=customer.language,
         billing_mode=job.billing_mode,
     )
@@ -151,6 +170,8 @@ async def walkthrough(
 
     job.transcript = transcript
     job.title = job.title or draft["title"]["customer"]
+    if not (job.title_es or job.title_en):
+        job.title_es, job.title_en = draft["title"]["es"], draft["title"]["en"]
     job.ai_questions = json.dumps(draft.get("questions", []), ensure_ascii=False)
     job.ai_assumptions = json.dumps(draft.get("assumptions", []), ensure_ascii=False)
     session.add(AuditLog(job_id=job.id, actor="system", action="ai_draft_estimate"))
@@ -161,7 +182,7 @@ async def walkthrough(
 class LineItemPatch(BaseModel):
     quantity: float | None = None
     unit_price_cents: int | None = None
-    text_tradesperson: str | None = None
+    text_tradesperson: str | None = None  # typed by the tradesperson: saved as-is in both text_es and text_en
     text_customer: str | None = None
 
 
@@ -173,13 +194,18 @@ def edit_line_item(
     if not item:
         raise HTTPException(404, "Line item not found")
     _get_job(item.job_id, tp, session)
-    for field, value in body.model_dump(exclude_none=True).items():
+    changes = body.model_dump(exclude_none=True)
+    typed = changes.pop("text_tradesperson", None)
+    if typed is not None:
+        item.text_es = item.text_en = typed
+    for field, value in changes.items():
         setattr(item, field, value)
     if body.unit_price_cents is not None:
         item.needs_price = False
         item.source = "manual"
     session.add(AuditLog(job_id=item.job_id, actor="tradesperson", action="edit_line_item", detail=str(item_id)))
     session.commit()
+    session.refresh(item)
     return item
 
 
